@@ -21,13 +21,13 @@ class AudioFilter:
         mu (float): LMS 步长因子。
     """
 
-    def __init__(self, filter_length: int = 32, mu: float = 0.01):
+    def __init__(self, filter_length: int = 64, mu: float = 0.001):
         """
         初始化滤波器参数。
 
         Args:
-            filter_length: LMS 滤波器 tap 长度，默认为 32。
-            mu: LMS 学习率（步长），默认为 0.01。
+            filter_length: LMS 滤波器 tap 长度，默认为 64。
+            mu: LMS 学习率（步长），默认为 0.001。
         """
         self.filter_length = filter_length
         self.mu = mu
@@ -88,7 +88,7 @@ class AudioFilter:
         t = np.arange(length) / fs
         return np.sin(2 * np.pi * f0 * t)
 
-    def iir_notch_filter(self, data: np.ndarray, fs: int, f0: float = 50.0, Q: float = 30.0) -> np.ndarray:
+    def iir_notch_filter(self, data: np.ndarray, fs: int, f0: float = 50.0, Q: float = 5.0) -> np.ndarray:
         """
         对输入信号应用 IIR 陷波滤波器，抑制指定频率。
 
@@ -96,7 +96,7 @@ class AudioFilter:
             data: 输入信号（1D 或 2D 立体声）。
             fs: 采样率（Hz）。
             f0: 陷波频率，默认为 50Hz。
-            Q: 品质因数，值越高带阻越窄，默认为 30。
+            Q: 品质因数，值越高带阻越窄，默认为 5。
 
         Returns:
             滤波后信号。与输入形状相同。

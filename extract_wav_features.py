@@ -84,6 +84,27 @@ def classify_audio(audio_path: str) -> tuple:
     label = classify_noise_deepseek(features)
     return features, label
 
+def get_filter_suggestion(snr_before, snr_after, filter_type, params: dict) -> str:
+    """
+    调用大模型，根据 SNR 提升和滤波参数生成优化建议。
+    """
+    prompt = (
+        f"当前滤波类型: {filter_type}\n"
+        f"滤波参数: {json.dumps(params, ensure_ascii=False)}\n"
+        f"滤波前 SNR: {snr_before:.2f} dB\n"
+        f"滤波后 SNR: {snr_after:.2f} dB\n"
+        "请根据这些信息，给出优化建议（如调整Q值、步长μ等），简要说明理由。"
+    )
+    messages = [
+        {"role": "system", "content": "你是音频信号处理专家，请根据参数和SNR提升，给出滤波优化建议。"},
+        {"role": "user", "content": prompt}
+    ]
+    response = client.chat.completions.create(
+        model="deepseek-chat",
+        messages=messages,
+        stream=False
+    )
+    return response.choices[0].message.content.strip()
 
 # CLI 支持和模块导入兼容
 if __name__ == '__main__':
