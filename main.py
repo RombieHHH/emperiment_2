@@ -5,6 +5,8 @@ from tkinter import filedialog, messagebox
 from tkinterdnd2 import DND_FILES, TkinterDnD
 from extract_wav_features import classify_audio
 from filter import process_audio
+from plot_audio_comparison import plot_comparison
+
 
 class AudioApp(TkinterDnD.Tk):
     def __init__(self):
@@ -56,10 +58,13 @@ class AudioApp(TkinterDnD.Tk):
             out_path = process_audio(filepath, filter_type=filter_type)
             if out_path:
                 self.result_text.insert(tk.END, f"滤波完成，输出文件: {out_path}\n")
+                # 绘图分析
+                plot_comparison(filepath, out_path, title_prefix="音频分析 - ")
             else:
                 self.result_text.insert(tk.END, "滤波失败\n")
         except Exception as e:
             messagebox.showerror("错误", f"滤波处理失败: {e}")
+
 
 if __name__ == '__main__':
     app = AudioApp()
