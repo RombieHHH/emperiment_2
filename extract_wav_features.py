@@ -89,22 +89,38 @@ def get_filter_suggestion(snr_before, snr_after, filter_type, params: dict) -> s
     调用大模型，根据 SNR 提升和滤波参数生成优化建议。
     """
     prompt = (
-        f"当前滤波类型: {filter_type}\n"
-        f"滤波参数: {json.dumps(params, ensure_ascii=False)}\n"
-        f"滤波前 SNR: {snr_before:.2f} dB\n"
-        f"滤波后 SNR: {snr_after:.2f} dB\n"
-        "请根据这些信息，给出优化建议（如调整Q值、步长μ等），简要说明理由。"
+        f"作为音频信号处理专家，请对以下滤波结果进行分析并给出具体建议：\n"
+        f"1. 当前使用的滤波器：{filter_type.upper()}\n"
+        f"2. 滤波参数：\n"
+        f"   - 频率(f0): {params['f0']} Hz\n"
+        f"   - {'Q值: ' + str(params['Q']) if filter_type=='iir' else 'LMS步长(μ): ' + str(params['lms_mu'])}\n"
+        f"   {('LMS滤波器长度: ' + str(params['lms_length'])) if filter_type=='lms' else ''}\n"
+        f"3. 信噪比变化：\n"
+        f"   - 处理前：{snr_before:.2f} dB\n"
+        f"   - 处理后：{snr_after:.2f} dB\n"
+        f"   - 提升：{snr_after-snr_before:.2f} dB\n\n"
+        "请给出具体的参数优化建议，要求：\n"
+        "1. 分析当前参数是否合适\n"
+        "2. 给出明确的参数调整方向\n"
+        "3. 简要说明调整理由\n"
+        "请用中文回答，简明扼要。"
     )
-    messages = [
-        {"role": "system", "content": "你是音频信号处理专家，请根据参数和SNR提升，给出滤波优化建议。"},
-        {"role": "user", "content": prompt}
-    ]
-    response = client.chat.completions.create(
-        model="deepseek-chat",
-        messages=messages,
-        stream=False
-    )
-    return response.choices[0].message.content.strip()
+    
+    try:
+        messages = [
+            {"role": "system", "content": "你是一位专业的音频信号处理专家，擅长滤波器参数优化。"},
+            {"role": "user", "content": prompt}
+        ]
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=messages,
+            stream=False,
+            temperature=0.7,  # 降低随机性
+            max_tokens=500    # 限制回复长度
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        return f"获取建议失败: {str(e)}"
 
 # CLI 支持和模块导入兼容
 if __name__ == '__main__':

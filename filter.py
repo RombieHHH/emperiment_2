@@ -123,30 +123,23 @@ class AudioFilter:
 
 # 全局函数：批量处理并保存结果
 
-def process_audio(input_path: str, filter_type: str = 'iir',
-                  f0: float = 50.0, Q: float = 30.0,
-                  filter_length: int = 32, mu: float = 0.01,
-                  output_dir: str = 'output') -> str:
+def process_audio(input_path, output_path, filter_type, f0, Q=None, filter_length=None, mu=None):
     """
     读取音频文件，应用指定滤波器并保存结果。
 
     Args:
         input_path: 输入 WAV 文件路径。
+        output_path: 输出 WAV 文件路径。
         filter_type: 'iir' 或 'lms'。
         f0: 陷波中心频率，用于 IIR。
         Q: IIR 品质因数。
         filter_length: LMS 滤波器长度。
         mu: LMS 学习率。
-        output_dir: 输出目录。
 
     Returns:
         输出文件路径，若失败返回 None。
     """
     try:
-        # 确保输出目录存在
-        out_dir = Path(output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
         # 读取音频
         data, fs = sf.read(input_path)
         if data.size == 0:
@@ -159,16 +152,12 @@ def process_audio(input_path: str, filter_type: str = 'iir',
         if filter_type.lower() == 'lms':
             ref = audio_filter.generate_reference(len(data), fs, f0)
             filtered = audio_filter.lms_filter(data, ref)
-            suffix = 'LMS'
         else:
             filtered = audio_filter.iir_notch_filter(data, fs, f0, Q)
-            suffix = 'IIR'
 
-        # 构造输出文件名
-        stem = Path(input_path).stem
-        out_path = out_dir / f"{stem}_{suffix}.wav"
-        sf.write(str(out_path), filtered, fs)
-        return str(out_path)
+        # 保存输出文件
+        sf.write(output_path, filtered, fs)
+        return output_path
 
     except Exception as e:
         print(f"处理音频文件时出错: {e}")
@@ -181,6 +170,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description="音频降噪：IIR 陷波 / LMS 自适应滤波")
     parser.add_argument('input_file', help='输入 WAV 文件路径')
+    parser.add_argument('output_file', help='输出 WAV 文件路径')
     parser.add_argument('--filter', choices=['iir', 'lms'], default='iir',
                         help='滤波类型，默认为 iir')
     parser.add_argument('--f0', type=float, default=50.0,
@@ -191,17 +181,15 @@ if __name__ == '__main__':
                         help='LMS 滤波器长度')
     parser.add_argument('--mu', type=float, default=0.01,
                         help='LMS 步长因子')
-    parser.add_argument('--out', default='output',
-                        help='输出目录')
     args = parser.parse_args()
 
     result = process_audio(
         input_path=args.input_file,
+        output_path=args.output_file,
         filter_type=args.filter,
         f0=args.f0,
         Q=args.Q,
         filter_length=args.length,
-        mu=args.mu,
-        output_dir=args.out
+        mu=args.mu
     )
     print(f"输出文件: {result}")

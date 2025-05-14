@@ -16,16 +16,7 @@ def compute_snr(original, processed):
     snr = 10 * np.log10(signal_power / (noise_power + 1e-10))
     return snr
 
-def simple_vad(y, sr, frame_ms=30, energy_thres=0.1):
-    """简单能量门限VAD，返回每帧是否为语音（True/False）"""
-    frame_len = int(sr * frame_ms / 1000)
-    hop_len = frame_len // 2
-    energies = np.array([np.mean(np.abs(y[i:i+frame_len])) for i in range(0, len(y)-frame_len, hop_len)])
-    thres = energy_thres * np.max(energies)
-    vad_mask = energies > thres
-    return vad_mask, frame_len, hop_len
-
-def plot_comparison(original_path: str, processed_path: str, title_prefix="", vad_enable=True):
+def plot_comparison(original_path: str, processed_path: str, title_prefix=""):
     plt.close('all')  # 关闭所有旧窗口
 
     # 读取音频
@@ -60,12 +51,6 @@ def plot_comparison(original_path: str, processed_path: str, title_prefix="", va
     plt.subplot(2, 2, 1)
     librosa.display.waveshow(y_orig, sr=sr_orig)
     plt.title(f"{title_prefix}原始波形", fontdict=font)
-    if vad_enable:
-        vad_mask, frame_len, hop_len = simple_vad(y_orig, sr_orig)
-        times = np.arange(len(vad_mask)) * hop_len / sr_orig
-        for idx, is_voice in enumerate(vad_mask):
-            if is_voice:
-                plt.axvspan(times[idx], times[idx]+frame_len/sr_orig, color='orange', alpha=0.2)
 
     plt.subplot(2, 2, 2)
     librosa.display.waveshow(y_proc, sr=sr_orig)
