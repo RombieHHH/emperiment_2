@@ -167,58 +167,92 @@ class AudioFilter:
 
 # 全局函数：批量处理并保存结果
 
-def process_audio(input_path, output_path, filter_type, f0, Q=None, filter_length=None, mu=None):
+def process_audio(input_path, output_path, noise_path, filter_type, noise_params, **kwargs):
     """
-    读取音频文件，应用指定滤波器并保存结果。
-
+    根据噪声参数和噪声文件进行针对性滤波
+    
     Args:
-        input_path: 输入 WAV 文件路径。
-        output_path: 输出 WAV 文件路径。
-        filter_type: 'iir' 或 'lms'。
-        f0: 陷波中心频率，用于 IIR。
-        Q: IIR 品质因数。
-        filter_length: LMS 滤波器长度。
-        mu: LMS 学习率。
-
-    Returns:
-        输出文件路径，若失败返回 None。
+        input_path: 输入的带噪音频路径
+        output_path: 输出的滤波后音频路径
+        noise_path: 纯噪声文件路径
+        filter_type: 滤波器类型 ('iir' 或 'lms')
+        noise_params: 噪声参数字典
     """
-    try:
-        data, fs = sf.read(input_path)
-        # 对于非稳态噪声，使用更激进的参数
-        if filter_type.lower() == 'lms':
-            filter_length = 32  # 减小滤波器长度以提高响应速度
-            mu = 0.01  # 增大步长以加快收敛
-        else:
-            Q = 2.0  # 降低Q值以增加带宽
-            
-        audio_filter = AudioFilter(filter_length=filter_length, mu=mu)
+    # 读取音频文件
+    audio, sr = sf.read(input_path)
+    noise, _ = sf.read(noise_path)
+    
+    # 确保音频长度一致
+    min_length = min(len(audio), len(noise))
+    audio = audio[:min_length]
+    noise = noise[:min_length]
+    
+    if filter_type == 'iir':
+        # 使用纯噪声信号优化IIR滤波器参数
+        f0 = noise_params['frequency']
+        Q = kwargs.get('Q', 30.0)
         
-        # 单声道转换
-        if len(data.shape) > 1:
-            data = data.mean(axis=1)
-            
-        if filter_type.lower() == 'lms':
-            # 自动估计主频率
-            estimated_f0 = audio_filter._estimate_noise_frequency(data, fs)
-            f0 = estimated_f0 if f0 is None else f0
-            
-            # 生成复合参考信号
-            t = np.arange(len(data)) / fs
-            reference = np.sin(2 * np.pi * f0 * t)
-            # 添加谐波分量
-            reference += 0.5 * np.sin(4 * np.pi * f0 * t)
-            
-            filtered = audio_filter.lms_filter(data, reference, mu)
-        else:
-            filtered = audio_filter.iir_notch_filter(data, fs, f0, Q)
-            
-        sf.write(output_path, filtered, fs)
-        return output_path
+        # 通过分析纯噪声信号调整Q值
+        noise_spectrum = np.abs(np.fft.fft(noise))
+        peak_idx = np.argmax(noise_spectrum[:len(noise_spectrum)//2])
+        peak_width = np.sum(noise_spectrum > np.max(noise_spectrum) * 0.707)
+        Q = min(Q, sr / (2 * peak_width)) # 根据噪声频谱宽度调整Q值
         
-    except Exception as e:
-        print(f"处理音频文件时出错: {e}")
-        return None
+        w0 = f0 / (sr/2)
+        b, a = signal.iirnotch(w0, Q)
+        filtered = signal.filtfilt(b, a, audio)
+        
+    else:  # lms
+        # 使用实际噪声作为参考
+        filter_length = kwargs.get('filter_length', 32)
+        mu = kwargs.get('mu', 0.02)
+        
+        # 使用噪声信号作为参考优化LMS滤波
+        reference = noise  # 直接使用纯噪声作为参考
+        
+        filtered = audio.copy()
+        if len(audio.shape) > 1:
+            for channel in range(audio.shape[1]):
+                filtered[:, channel] = adaptive_noise_cancellation(
+                    audio[:, channel],
+                    reference,
+                    filter_length,
+                    mu
+                )
+        else:
+            filtered = adaptive_noise_cancellation(audio, reference, filter_length, mu)
+    
+    # 保存处理后的音频
+    sf.write(output_path, filtered, sr)
+    return True
+
+def adaptive_noise_cancellation(primary, reference, filter_length, mu):
+    """改进的自适应噪声消除器"""
+    w = np.zeros(filter_length)
+    y = np.zeros_like(primary)
+    
+    # 分块处理以提高效率
+    block_size = 2048
+    overlap = filter_length
+    
+    for i in range(0, len(primary), block_size - overlap):
+        block_end = min(i + block_size, len(primary))
+        
+        # 获取当前数据块
+        d = primary[i:block_end]
+        x = reference[i:block_end]
+        
+        # 对当前块进行处理
+        for n in range(filter_length, len(d)):
+            x_buf = x[n-filter_length:n][::-1]
+            y[i+n] = np.dot(w, x_buf)
+            e = d[n] - y[i+n]
+            
+            # 归一化LMS更新
+            power = np.dot(x_buf, x_buf) + 1e-10
+            w = w + 2 * mu * e * x_buf / power
+    
+    return primary - y
 
 
 # 示例调用
@@ -228,6 +262,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="音频降噪：IIR 陷波 / LMS 自适应滤波")
     parser.add_argument('input_file', help='输入 WAV 文件路径')
     parser.add_argument('output_file', help='输出 WAV 文件路径')
+    parser.add_argument('noise_file', help='纯噪声 WAV 文件路径')
     parser.add_argument('--filter', choices=['iir', 'lms'], default='iir',
                         help='滤波类型，默认为 iir')
     parser.add_argument('--f0', type=float, default=50.0,
@@ -243,8 +278,9 @@ if __name__ == '__main__':
     result = process_audio(
         input_path=args.input_file,
         output_path=args.output_file,
+        noise_path=args.noise_file,
         filter_type=args.filter,
-        f0=args.f0,
+        noise_params={'frequency': args.f0, 'type': 'steady' if args.filter == 'iir' else 'non_steady'},
         Q=args.Q,
         filter_length=args.length,
         mu=args.mu

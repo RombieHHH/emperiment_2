@@ -23,82 +23,152 @@ except ImportError:
 
 class AudioApp(TkinterDnD.Tk):
     def __init__(self):
-        super().__init__()
+        # 初始化父类
+        TkinterDnD.Tk.__init__(self)
+        self.init_window()
+        self.init_variables()
+        self.create_widgets()
+        self.setup_output_dir()
+
+    def init_window(self):
+        """初始化窗口基本设置"""
         self.title("音频噪声处理系统")
-        self.geometry("900x700")
+        self.geometry("1024x768")
         self.configure(bg='#f4f4f4')
-        self.resizable(True, True)  # 允许窗口调节大小
+        
+        # 创建主容器
+        self.main_container = ttk.Frame(self)
+        self.main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
-        # 中文友好字体
-        cn_font = ('微软雅黑', 12)
-        cn_font_bold = ('微软雅黑', 13, 'bold')
-        cn_font_text = ('微软雅黑', 11)
-
-        # 样式
+        # 设置样式
         style = ttk.Style()
         style.theme_use('clam')
-        style.configure('TButton', font=cn_font, padding=6)
-        style.configure('TLabel', font=cn_font, background='#f4f4f4')
-        style.configure('TFrame', background='#f4f4f4')
-        style.configure('TLabelframe.Label', font=cn_font_bold)
-        style.configure('TLabelframe', background='#f4f4f4')
+        self.setup_styles(style)
 
+    def init_variables(self):
+        """初始化变量"""
+        self.noise_type_var = tk.StringVar(value="steady")
+        self.noise_freq_var = tk.DoubleVar(value=50.0)
+        self.noise_amp_var = tk.DoubleVar(value=0.5)
+        self.sample_rate_var = tk.StringVar(value="44100")
+        self.q_factor_var = tk.DoubleVar(value=30.0)
+        self.filter_length_var = tk.IntVar(value=64)
+
+    def setup_styles(self, style):
+        """设置界面样式"""
+        self.cn_font = ('微软雅黑', 12)
+        self.cn_font_bold = ('微软雅黑', 13, 'bold')
+        self.cn_font_text = ('微软雅黑', 11)
+        
+        style.configure('Custom.TFrame', background='#f4f4f4')
+        style.configure('Custom.TButton', 
+                       font=self.cn_font, 
+                       padding=6)
+        style.configure('Custom.TLabel', 
+                       font=self.cn_font, 
+                       background='#f4f4f4')
+        style.configure('Custom.TLabelframe', 
+                       background='#f4f4f4',
+                       padding=10)
+        style.configure('Custom.TLabelframe.Label', 
+                       font=self.cn_font_bold)
+
+    def setup_output_dir(self):
+        """设置输出目录"""
+        self.output_dir = os.path.join(os.path.dirname(__file__), "output")
+        os.makedirs(self.output_dir, exist_ok=True)
+
+    def create_widgets(self):
+        """创建界面组件"""
         # 文件选择区
-        file_frame = ttk.Frame(self)
-        file_frame.pack(fill=tk.X, pady=10, padx=10)
-        self.file_label = ttk.Label(file_frame, text="音频文件:")
-        self.file_label.pack(side=tk.LEFT)
-        self.file_entry = ttk.Entry(file_frame, width=60, font=cn_font)
-        self.file_entry.pack(side=tk.LEFT, padx=5)
-        self.browse_btn = ttk.Button(file_frame, text="选择文件", command=self.browse_file)
-        self.browse_btn.pack(side=tk.LEFT, padx=5)
-
+        self.create_file_section()
         # 拖拽区域
-        self.drop_label = tk.Label(self, text="或将音频文件拖拽到此处", bg='#e0e0e0', fg='black',
-                                   font=cn_font_bold, relief="groove", bd=2, width=60, height=2)
+        self.create_drop_zone()
+        # 参数设置区
+        self.create_parameter_section()
+        # 按钮区
+        self.create_button_section()
+        # 结果显示区
+        self.create_result_section()
+
+    def create_file_section(self):
+        """创建文件选择区域"""
+        file_frame = ttk.Frame(self.main_container, style='Custom.TFrame')
+        file_frame.pack(fill=tk.X, pady=5)
+        
+        ttk.Label(file_frame, text="音频文件:", 
+                 style='Custom.TLabel').pack(side=tk.LEFT)
+        self.file_entry = ttk.Entry(file_frame, width=60, 
+                                  font=self.cn_font)
+        self.file_entry.pack(side=tk.LEFT, padx=5)
+        ttk.Button(file_frame, text="选择文件", 
+                  command=self.browse_file,
+                  style='Custom.TButton').pack(side=tk.LEFT, padx=5)
+
+    def create_drop_zone(self):
+        """创建拖拽区域"""
+        self.drop_label = tk.Label(self.main_container, text="或将音频文件拖拽到此处", bg='#e0e0e0', fg='black',
+                                   font=self.cn_font_bold, relief="groove", bd=2, width=60, height=2)
         self.drop_label.pack(pady=5)
         self.drop_label.drop_target_register(DND_FILES)
         self.drop_label.dnd_bind('<<Drop>>', self.drop)
 
-        # 创建输出目录
-        self.output_dir = os.path.join(os.path.dirname(__file__), "output")
-        os.makedirs(self.output_dir, exist_ok=True)
-
+    def create_parameter_section(self):
+        """创建参数设置区"""
         # 噪声设置区
-        noise_frame = ttk.LabelFrame(self, text="噪声生成设置")
+        noise_frame = ttk.LabelFrame(self.main_container, text="噪声生成设置", style='Custom.TLabelframe')
         noise_frame.pack(fill=tk.X, padx=10, pady=5)
         
         # 噪声类型选择
-        ttk.Label(noise_frame, text="噪声类型:").grid(row=0, column=0, padx=5, pady=2)
-        self.noise_type_var = tk.StringVar(value="steady")
+        ttk.Label(noise_frame, text="噪声类型:", style='Custom.TLabel').grid(row=0, column=0, padx=5, pady=2)
         ttk.Combobox(noise_frame, textvariable=self.noise_type_var, 
                     values=["steady", "non_steady"], width=12, 
-                    state="readonly", font=cn_font).grid(row=0, column=1, padx=5)
+                    state="readonly", font=self.cn_font).grid(row=0, column=1, padx=5)
         
         # 噪声参数
-        ttk.Label(noise_frame, text="噪声频率:").grid(row=0, column=2, padx=5)
-        self.noise_freq_var = tk.DoubleVar(value=50.0)
-        ttk.Entry(noise_frame, textvariable=self.noise_freq_var, width=8, font=cn_font).grid(row=0, column=3, padx=5)
+        ttk.Label(noise_frame, text="噪声频率:", style='Custom.TLabel').grid(row=0, column=2, padx=5)
+        ttk.Entry(noise_frame, textvariable=self.noise_freq_var, width=8, font=self.cn_font).grid(row=0, column=3, padx=5)
         
-        ttk.Label(noise_frame, text="噪声强度:").grid(row=0, column=4, padx=5)
-        self.noise_amp_var = tk.DoubleVar(value=0.5)
-        ttk.Entry(noise_frame, textvariable=self.noise_amp_var, width=8, font=cn_font).grid(row=0, column=5, padx=5)
+        ttk.Label(noise_frame, text="噪声强度:", style='Custom.TLabel').grid(row=0, column=4, padx=5)
+        ttk.Entry(noise_frame, textvariable=self.noise_amp_var, width=8, font=self.cn_font).grid(row=0, column=5, padx=5)
 
-        # 按钮区
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(fill=tk.X, pady=5, padx=10)
-        self.add_noise_btn = ttk.Button(btn_frame, text="添加噪声", command=self.add_noise)
+        # 高级参数区域
+        advanced_frame = ttk.LabelFrame(self.main_container, text="高级参数设置", style='Custom.TLabelframe')
+        advanced_frame.pack(fill=tk.X, padx=15, pady=(10,5))
+        
+        # 网格布局参数设置
+        param_frame = ttk.Frame(advanced_frame, style='Custom.TFrame')
+        param_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        # 第一行参数
+        ttk.Label(param_frame, text="采样率(Hz):", style='Custom.TLabel').grid(row=0, column=0, padx=5, pady=2)
+        ttk.Entry(param_frame, textvariable=self.sample_rate_var, width=10).grid(row=0, column=1, padx=5)
+        
+        ttk.Label(param_frame, text="Q值:", style='Custom.TLabel').grid(row=0, column=2, padx=5)
+        ttk.Entry(param_frame, textvariable=self.q_factor_var, width=8).grid(row=0, column=3, padx=5)
+        
+        ttk.Label(param_frame, text="滤波器长度:", style='Custom.TLabel').grid(row=0, column=4, padx=5)
+        ttk.Entry(param_frame, textvariable=self.filter_length_var, width=8).grid(row=0, column=5, padx=5)
+
+    def create_button_section(self):
+        """创建按钮区"""
+        btn_frame = ttk.Frame(self.main_container, style='Custom.TFrame')
+        btn_frame.pack(fill=tk.X, pady=5)
+        
+        self.add_noise_btn = ttk.Button(btn_frame, text="添加噪声", command=self.add_noise, style='Custom.TButton')
         self.add_noise_btn.pack(side=tk.LEFT, padx=5)
-        self.process_btn = ttk.Button(btn_frame, text="自动滤波", command=self.process_and_analyze)
+        self.process_btn = ttk.Button(btn_frame, text="自动滤波", command=self.process_and_analyze, style='Custom.TButton')
         self.process_btn.pack(side=tk.LEFT, padx=5)
         if HAS_REALTIME:
-            self.realtime_btn = ttk.Button(btn_frame, text="实时处理", command=self.start_realtime)
+            self.realtime_btn = ttk.Button(btn_frame, text="实时处理", command=self.start_realtime, style='Custom.TButton')
             self.realtime_btn.pack(side=tk.LEFT, padx=5)
 
-        # 结果展示区
-        result_frame = ttk.Frame(self)
+    def create_result_section(self):
+        """创建结果显示区"""
+        result_frame = ttk.Frame(self.main_container, style='Custom.TFrame')
         result_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
-        self.result_text = tk.Text(result_frame, height=15, wrap=tk.WORD, font=cn_font_text)
+        
+        self.result_text = tk.Text(result_frame, height=15, wrap=tk.WORD, font=self.cn_font_text)
         self.result_text.pack(fill=tk.BOTH, expand=True)
         self.result_text.insert(tk.END, "等待文件拖入或选择...\n")
 
@@ -123,41 +193,57 @@ class AudioApp(TkinterDnD.Tk):
             # 读取原始音频
             y_orig, sr = sf.read(filepath)
             filename = os.path.basename(filepath)
+            base_name = os.path.splitext(filename)[0]
             clean_path = os.path.join(self.output_dir, filename)
             
-            # 如果目标文件不存在则拷贝
+            # 保存原始音频副本
             if not os.path.exists(clean_path):
                 import shutil
                 shutil.copy2(filepath, clean_path)
                 self.result_text.insert(tk.END, f"已拷贝原始音频至: {clean_path}\n")
             
-            # 生成噪声
-            from noise_generator import generate_steady_noise, generate_non_steady_noise
+            # 生成纯噪声信号
+            noise_params = {
+                'type': self.noise_type_var.get(),
+                'frequency': self.noise_freq_var.get(),
+                'amplitude': self.noise_amp_var.get(),
+                'sample_rate': sr,
+                'duration': len(y_orig) / sr
+            }
             
-            is_stereo = len(y_orig.shape) > 1 and y_orig.shape[1] > 1
-            noise_type = self.noise_type_var.get()
-            noise_freq = self.noise_freq_var.get()
-            noise_amp = self.noise_amp_var.get()
+            # 生成并保存噪声文件
+            from noise_generator import generate_noise
+            noise = generate_noise(**noise_params)
+            noise_path = os.path.join(self.output_dir, f'{base_name}_noise.wav')
+            sf.write(noise_path, noise, sr)
             
-            if noise_type == "steady":
-                noise = generate_steady_noise(len(y_orig), sr, noise_freq, noise_amp)
-            else:
-                noise = generate_non_steady_noise(len(y_orig), sr, noise_freq, noise_amp)
+            # 分析噪声特征并保存
+            features, noise_type = classify_audio(noise_path)
+            params_path = os.path.join(self.output_dir, f'{base_name}_noise_params.json')
+            
+            # 保存噪声参数和分类结果
+            with open(params_path, 'w') as f:
+                json.dump({
+                    'params': noise_params,
+                    'features': features,
+                    'classified_type': noise_type
+                }, f, indent=2)
                 
-            if is_stereo:
+            # 合成带噪音频
+            if len(y_orig.shape) > 1 and y_orig.shape[1] > 1:
                 noise = np.column_stack((noise, noise))
-            
-            # 混合噪声并保存
             y_noisy = y_orig + noise
-            noisy_path = os.path.join(self.output_dir, os.path.splitext(filename)[0] + '_noisy.wav')
+            noisy_path = os.path.join(self.output_dir, f'{base_name}_noisy.wav')
             sf.write(noisy_path, y_noisy, sr)
             
-            self.result_text.insert(tk.END, f"已添加{noise_type}噪声，保存至: {noisy_path}\n")
+            self.result_text.insert(tk.END, 
+                f"已生成噪声文件: {noise_path}\n"
+                f"噪声类型识别结果: {noise_type}\n"
+                f"带噪声音频已保存至: {noisy_path}\n"
+                f"噪声参数和特征已保存至: {params_path}\n")
+            
             self.file_entry.delete(0, tk.END)
             self.file_entry.insert(0, noisy_path)
-            
-            # 计算并绘制SNR
-            self.plot_snr(y_orig, y_noisy, sr)
             
         except Exception as e:
             messagebox.showerror("错误", f"添加噪声失败: {str(e)}")
@@ -203,37 +289,42 @@ class AudioApp(TkinterDnD.Tk):
             try:
                 # 获取相关文件路径
                 filename = os.path.basename(filepath)
-                clean_path = os.path.join(self.output_dir, filename.replace('_noisy.wav', '.wav'))
-                if not os.path.exists(clean_path):
-                    messagebox.showerror("错误", f"未找到原始干净音频文件：{clean_path}")
-                    return
-
-                # 获取滤波器参数和分类结果
-                features, result = classify_audio(filepath)
-                self.result_text.delete(1.0, tk.END)
-                self.result_text.insert(tk.END, f"噪声分类结果: {result}\n")
-                filter_type = "iir" if result == "稳态噪声" else "lms"
+                base_name = os.path.splitext(filename)[0].replace('_noisy', '')
+                clean_path = os.path.join(self.output_dir, f'{base_name}.wav')
+                noise_path = os.path.join(self.output_dir, f'{base_name}_noise.wav')
+                params_path = os.path.join(self.output_dir, f'{base_name}_noise_params.json')
                 
-                out_path = os.path.join(self.output_dir, os.path.splitext(filename)[0] + '_filtered.wav')
+                # 检查必要文件是否存在
+                for path in [clean_path, noise_path, params_path]:
+                    if not os.path.exists(path):
+                        raise FileNotFoundError(f"找不到文件: {path}")
                 
-                processed = process_audio(
-                    input_path=filepath,
-                    output_path=out_path,
-                    filter_type=filter_type,
-                    f0=self.noise_freq_var.get(),
-                    Q=2.0 if filter_type == "iir" else None,  # 降低Q值
-                    filter_length=32 if filter_type == "lms" else None,  # 减小滤波器长度
-                    mu=0.01 if filter_type == "lms" else None  # 增大步长
-                )
+                # 读取噪声参数和分类结果
+                with open(params_path, 'r') as f:
+                    noise_info = json.load(f)
+                
+                # 处理音频
+                filter_params = {
+                    'input_path': filepath,
+                    'output_path': os.path.join(self.output_dir, f'{base_name}_filtered.wav'),
+                    'noise_path': noise_path,
+                    'filter_type': 'iir' if noise_info['classified_type'] == "稳态噪声" else 'lms',
+                    'noise_params': noise_info['params']
+                }
+                
+                processed = process_audio(**filter_params)
 
                 if processed:
-                    self.result_text.insert(tk.END, f"滤波完成，输出文件: {out_path}\n")
-                    # 使用更新后的plot_comparison函数进行分析
+                    self.result_text.delete(1.0, tk.END)
+                    self.result_text.insert(tk.END, f"滤波完成，输出文件: {filter_params['output_path']}\n")
+                    
+                    # 分析处理效果
                     snr_results = plot_comparison(
-                        original_path=filepath,  # 含噪音频
-                        processed_path=out_path, # 滤波后音频
-                        clean_path=clean_path,   # 原始干净音频
-                        title_prefix="频谱对比 - "
+                        original_path=filepath,
+                        processed_path=filter_params['output_path'],
+                        clean_path=clean_path,
+                        noise_path=noise_path,
+                        title_prefix=f"频谱对比 ({noise_info['classified_type']}) - "
                     )
                     
                     if snr_results:
@@ -243,6 +334,7 @@ class AudioApp(TkinterDnD.Tk):
                             f"SNR提升: {snr_after - snr_before:.2f} dB\n")
                 else:
                     self.result_text.insert(tk.END, "滤波失败\n")
+                    
             except Exception as e:
                 self.result_text.insert(tk.END, f"处理失败: {str(e)}\n")
 
