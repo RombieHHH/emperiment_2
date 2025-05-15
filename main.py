@@ -130,7 +130,7 @@ class AudioApp(TkinterDnD.Tk):
         ttk.Entry(noise_frame, textvariable=self.noise_freq_var, width=8, font=self.cn_font).grid(row=0, column=3, padx=5)
         
         ttk.Label(noise_frame, text="噪声强度:", style='Custom.TLabel').grid(row=0, column=4, padx=5)
-        ttk.Entry(noise_frame, textvariable=self.noise_amp_var, width=8, font=self.cn_font).grid(row=0, column=5, padx=5)
+        ttk.Entry(noise_frame, textvariable=self.noise_amp_var, width=8).grid(row=0, column=5, padx=5)
 
         # 高级参数区域
         advanced_frame = ttk.LabelFrame(self.main_container, text="高级参数设置", style='Custom.TLabelframe')
@@ -341,43 +341,45 @@ class AudioApp(TkinterDnD.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def start_realtime(self):
-        if not HAS_REALTIME:
-            messagebox.showinfo("提示", "未检测到实时处理模块。")
-            return
-            
+        """纯录音功能"""
         # 定义录音参数
-        FORMAT = pyaudio.paInt16  # 改用PCM格式
+        FORMAT = pyaudio.paInt16  # 使用 PCM 格式
         CHANNELS = 1
-        RATE = 16000
-        CHUNK = 1024
+        RATE = 44100
+        CHUNK = 2048  # 增大缓冲区以减少爆音
 
         rec_win = tk.Toplevel(self)
-        rec_win.title("实时录音")
+        rec_win.title("录音")
         rec_win.geometry("400x180")
         rec_win.resizable(False, False)
         
         # 录音界面控件
-        rec_label = tk.Label(rec_win, text="点击开始录音，录音结束后自动处理", font=('微软雅黑', 12))
+        rec_label = tk.Label(rec_win, text="点击开始录音", font=self.cn_font)
         rec_label.pack(pady=10)
         status_var = tk.StringVar(value="等待录音...")
-        status_label = tk.Label(rec_win, textvariable=status_var, font=('微软雅黑', 11))
+        status_label = tk.Label(rec_win, textvariable=status_var, font=self.cn_font_text)
         status_label.pack(pady=5)
-        record_btn = ttk.Button(rec_win, text="开始录音", width=15)
+        record_btn = ttk.Button(rec_win, text="开始录音", width=15, style='Custom.TButton')
         record_btn.pack(pady=10)
-        stop_btn = ttk.Button(rec_win, text="停止录音", width=15, state=tk.DISABLED)
+        stop_btn = ttk.Button(rec_win, text="停止录音", width=15, state=tk.DISABLED, style='Custom.TButton')
         stop_btn.pack(pady=5)
 
-        self._recording = False  # 录音状态标志
-        self._audio_frames = []  # 音频数据缓存
+        self._recording = False
+        self._audio_frames = []
 
         def record():
             try:
                 p = pyaudio.PyAudio()
+                # 获取默认输入设备的参数
+                default_device = p.get_default_input_device_info()
+                default_rate = int(default_device['defaultSampleRate'])
+                
                 stream = p.open(format=FORMAT, 
                               channels=CHANNELS,
-                              rate=RATE,
+                              rate=default_rate,
                               input=True, 
-                              frames_per_buffer=CHUNK)
+                              frames_per_buffer=CHUNK,
+                              input_device_index=default_device['index'])
                 
                 self._recording = True
                 self._audio_frames = []
@@ -387,24 +389,18 @@ class AudioApp(TkinterDnD.Tk):
                         while self._recording:
                             data = stream.read(CHUNK, exception_on_overflow=False)
                             self._audio_frames.append(data)
-                            import time
-                            time.sleep(0.001)  # 短暂释放CPU
                     finally:
                         stream.stop_stream()
                         stream.close()
                         p.terminate()
                         
                         if len(self._audio_frames) > 0:
-                            # 在主线程中处理录音数据
-                            rec_win.after(100, process_recorded_audio)
+                            rec_win.after(100, save_recording)
                 
-                # 启动录音线程
                 threading.Thread(target=record_thread, daemon=True).start()
-                
-                # 更新界面状态
-                status_var.set("录音中...点击停止录音")
+                status_var.set("录音中...")
                 record_btn.config(state=tk.DISABLED)
-                stop_btn.config(state=tk.NORMAL)  # 修复这里的语法错误
+                stop_btn.config(state=tk.NORMAL)
                 
             except Exception as e:
                 messagebox.showerror("错误", f"录音初始化失败: {str(e)}")
@@ -412,67 +408,37 @@ class AudioApp(TkinterDnD.Tk):
 
         def stop_recording():
             self._recording = False
-            status_var.set("正在保存录音...")
+            status_var.set("正在保存...")
             stop_btn.config(state=tk.DISABLED)
 
-        def process_recorded_audio():
+        def save_recording():
             try:
-                from io import BytesIO
-                import wave
+                # 保存录音为WAV文件
+                clean_path = os.path.join(self.output_dir, 'recording.wav')
                 
-                # 保存为WAV格式
-                wav_buffer = BytesIO()
-                with wave.open(wav_buffer, 'wb') as wf:
+                p = pyaudio.PyAudio()
+                with wave.open(clean_path, 'wb') as wf:
                     wf.setnchannels(CHANNELS)
-                    wf.setsampwidth(pyaudio.PyAudio().get_sample_size(FORMAT))
+                    wf.setsampwidth(p.get_sample_size(FORMAT))
                     wf.setframerate(RATE)
                     wf.writeframes(b''.join(self._audio_frames))
+                p.terminate()
+
+                # 更新文件输入框
+                self.file_entry.delete(0, tk.END)
+                self.file_entry.insert(0, clean_path)
                 
-                # 转换为float32进行处理
-                wav_buffer.seek(0)
-                y_orig, sr = sf.read(wav_buffer)
+                # 关闭录音窗口
+                rec_win.destroy()
                 
-                # 保存原始录音
-                clean_path = os.path.join(self.output_dir, 'realtime_clean.wav')
-                sf.write(clean_path, y_orig, sr)
-                
-                # 生成并添加噪声
-                from noise_generator import add_noise_to_audio
-                y_noisy = add_noise_to_audio(
-                    y_orig, 
-                    self.noise_type_var.get(),
-                    self.noise_freq_var.get(),
-                    self.noise_amp_var.get(),
-                    sr
-                )
-                
-                noisy_path = os.path.join(self.output_dir, 'realtime_noisy.wav')
-                sf.write(noisy_path, y_noisy, sr)
-                
-                # 其余处理逻辑保持不变
-                features, result = classify_audio(noisy_path)
-                filter_type = "iir" if result == "稳态噪声" else "lms"
-                out_path = os.path.join(self.output_dir, 'realtime_filtered.wav')
-                
-                if process_audio(noisy_path, out_path, 
-                                   filter_type=filter_type,
-                                   f0=self.noise_freq_var.get(),
-                                   Q=5.0 if filter_type == "iir" else None,
-                                   filter_length=64 if filter_type == "lms" else None,
-                                   mu=0.001 if filter_type == "lms" else None):
-                    # 更新处理结果
-                    self.result_text.delete(1.0, tk.END)
-                    self.result_text.insert(tk.END, 
-                        f"实时处理完成\n"
-                        f"原始录音: {clean_path}\n"
-                        f"带噪声音频: {noisy_path}\n"
-                        f"滤波后音频: {out_path}\n")
-                    # 使用干净录音进行对比分析
-                    plot_comparison(noisy_path, out_path, clean_path, title_prefix="实时处理 - ")
-                        
+                # 提示用户继续处理
+                self.result_text.delete(1.0, tk.END)
+                self.result_text.insert(tk.END, 
+                    f"录音已保存至: {clean_path}\n"
+                    "请点击'添加噪声'继续处理...\n")
+                    
             except Exception as e:
-                messagebox.showerror("错误", f"处理录音失败: {str(e)}")
-            finally:
+                messagebox.showerror("错误", f"保存录音失败: {str(e)}")
                 rec_win.destroy()
 
         # 绑定按钮事件
@@ -480,7 +446,8 @@ class AudioApp(TkinterDnD.Tk):
         stop_btn.config(command=stop_recording)
         
         # 确保窗口关闭时停止录音
-        rec_win.protocol("WM_DELETE_WINDOW", lambda: [stop_recording(), rec_win.destroy()])
+        rec_win.protocol("WM_DELETE_WINDOW", 
+                        lambda: [stop_recording(), rec_win.destroy()])
 
 if __name__ == '__main__':
     app = AudioApp()

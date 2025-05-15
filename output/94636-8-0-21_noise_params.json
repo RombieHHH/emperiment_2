@@ -1,0 +1,20 @@
+{
+  "params": {
+    "type": "non_steady",
+    "frequency": 50.0,
+    "amplitude": 0.5,
+    "sample_rate": 44100,
+    "duration": 4.0
+  },
+  "features": {
+    "centroid_mean": 59.07267918278514,
+    "centroid_var": 276.9574689251162,
+    "bandwidth_mean": 236.90872938729134,
+    "bandwidth_var": 1956.4140367919383,
+    "flux_mean": 66.23851468854414,
+    "flux_var": 3483.102143419304,
+    "entropy_mean": 2.599172353744507,
+    "entropy_var": 0.027206482365727425
+  },
+  "classified_type": "\u975e\u7a33\u6001\u566a\u58f0"
+}
