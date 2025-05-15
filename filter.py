@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 from scipy import signal
 import soundfile as sf
+import librosa
 
 
 class AudioFilter:
@@ -31,47 +32,84 @@ class AudioFilter:
         """
         self.filter_length = filter_length
         self.mu = mu
+        self.w = None  # 保存滤波器权重
+
+    def _detect_bursts(self, data: np.ndarray, threshold: float = 0.7) -> np.ndarray:
+        """改进的突发检测，使用短时能量和过零率双重检测"""
+        frame_length = 1024
+        hop_length = frame_length // 2
+        
+        # 计算短时能量
+        energy = np.array([
+            np.sum(data[i:i+frame_length]**2) 
+            for i in range(0, len(data)-frame_length, hop_length)
+        ])
+        energy = energy / np.max(energy)
+        
+        # 计算过零率
+        zero_crossings = np.array([
+            np.sum(np.abs(np.diff(np.signbit(data[i:i+frame_length])))) 
+            for i in range(0, len(data)-frame_length, hop_length)
+        ])
+        zero_crossings = zero_crossings / np.max(zero_crossings)
+        
+        # 综合判断突发段
+        burst_frames = (energy > threshold) | (zero_crossings > threshold * 0.8)
+        return burst_frames, range(0, len(data)-frame_length, hop_length)
 
     def lms_filter(self, data: np.ndarray, reference: np.ndarray, mu: float = None) -> np.ndarray:
-        """
-        对输入信号应用 LMS 自适应滤波。
-
-        Args:
-            data: 输入信号（1D 或 2D 立体声）。
-            reference: 参考噪声信号，应与 data 等长。
-            mu: 可选的步长因子，默认使用实例属性 self.mu。
-
-        Returns:
-            滤波后信号，与输入形状相同。
-        """
+        """改进的LMS滤波器，针对非稳态噪声优化"""
         if mu is not None:
             self.mu = mu
 
-        # 判断是否为立体声
-        if data.ndim == 2:
-            left = self._lms_process_channel(data[:, 0], reference)
-            right = self._lms_process_channel(data[:, 1], reference)
-            return np.stack((left, right), axis=1)
-        else:
-            return self._lms_process_channel(data, reference)
+        # 确保输入为一维数组
+        if len(data.shape) > 1:
+            data = data.mean(axis=1)
 
-    def _lms_process_channel(self, channel: np.ndarray, reference: np.ndarray) -> np.ndarray:
-        """
-        对单声道信号执行 LMS 运算。
-        """
-        # 初始化权重和输出
-        w = np.zeros(self.filter_length)
-        y = np.zeros_like(channel)
+        # 初始化
+        if self.w is None:
+            self.w = np.zeros(self.filter_length)
+        y = np.zeros_like(data)
+        
+        # 检测突发段
+        burst_frames, frame_indices = self._detect_bursts(data)
+        
+        # 计算自适应步长
+        adaptive_mu = np.ones(len(data)) * self.mu
+        for i, frame_start in enumerate(frame_indices):
+            if burst_frames[i]:
+                frame_end = min(frame_start + 1024, len(data))
+                # 突发段使用更大的步长和更短的滤波器长度
+                adaptive_mu[frame_start:frame_end] = self.mu * 3
+                
+        # 改进的LMS算法
+        for n in range(self.filter_length, len(data)):
+            x = reference[n-self.filter_length:n][::-1]
+            power = np.dot(x, x) + 1e-10
+            
+            # 计算输出
+            y[n] = np.dot(self.w, x)
+            
+            # 计算误差
+            e = data[n] - y[n]
+            
+            # 自适应更新权重
+            self.w += 2 * adaptive_mu[n] * e * x / power
+            
+            # 在突发段后重置权重
+            if n > 0 and adaptive_mu[n] > adaptive_mu[n-1]:
+                self.w = np.zeros(self.filter_length)
 
-        # 从 filter_length 开始计算
-        for n in range(self.filter_length, len(channel)):
-            x_vec = reference[n - self.filter_length:n][::-1]
-            y[n] = np.dot(w, x_vec)
-            e = channel[n] - y[n]
-            w += 2 * self.mu * e * x_vec
+        return data - y
 
-        # 返回原始信号减去估计噪声
-        return channel - y
+    def _estimate_noise_frequency(self, data: np.ndarray, fs: int) -> float:
+        """估计噪声主频率"""
+        D = librosa.stft(data)
+        freqs = librosa.fft_frequencies(sr=fs)
+        magnitude_spectrum = np.abs(D)
+        avg_magnitude = np.mean(magnitude_spectrum, axis=1)
+        peak_freq_idx = np.argmax(avg_magnitude)
+        return freqs[peak_freq_idx]
 
     def generate_reference(self, length: int, fs: int, f0: float = 50.0) -> np.ndarray:
         """
@@ -90,7 +128,7 @@ class AudioFilter:
 
     def iir_notch_filter(self, data: np.ndarray, fs: int, f0: float = 50.0, Q: float = 5.0) -> np.ndarray:
         """
-        对输入信号应用 IIR 陷波滤波器，抑制指定频率。
+        改进的IIR陷波滤波器，增加自适应Q值
 
         Args:
             data: 输入信号（1D 或 2D 立体声）。
@@ -101,24 +139,30 @@ class AudioFilter:
         Returns:
             滤波后信号。与输入形状相同。
         """
-        if data.ndim == 2:
-            left = self._iir_process_channel(data[:, 0], fs, f0, Q)
-            right = self._iir_process_channel(data[:, 1], fs, f0, Q)
-            return np.stack((left, right), axis=1)
-        else:
-            return self._iir_process_channel(data, fs, f0, Q)
+        # 检测突发段
+        burst_frames = self._detect_bursts(data)
 
-    def _iir_process_channel(self, channel: np.ndarray, fs: int, f0: float, Q: float) -> np.ndarray:
-        """
-        IIR 单声道处理，优先使用 filtfilt，失败时退化到 lfilter。
-        """
-        # 归一化频率
-        w0 = f0 / (fs / 2)
-        b, a = signal.iirnotch(w0, Q)
-        try:
-            return signal.filtfilt(b, a, channel)
-        except ValueError:
-            return signal.lfilter(b, a, channel)
+        # 在突发段降低Q值以增加带宽
+        filtered = np.zeros_like(data)
+        for i in range(len(burst_frames)):
+            start = i * 512
+            end = start + 1024
+            if end > len(data):
+                end = len(data)
+
+            local_Q = Q if not burst_frames[i] else Q/2
+            w0 = f0 / (fs/2)
+            b, a = signal.iirnotch(w0, local_Q)
+
+            if start == 0:
+                filtered[start:end] = signal.filtfilt(b, a, data[start:end])
+            else:
+                # 处理段间过渡
+                overlap = 100
+                temp = signal.filtfilt(b, a, data[start-overlap:end])
+                filtered[start:end] = temp[overlap:]
+
+        return filtered
 
 
 # 全局函数：批量处理并保存结果
@@ -140,25 +184,38 @@ def process_audio(input_path, output_path, filter_type, f0, Q=None, filter_lengt
         输出文件路径，若失败返回 None。
     """
     try:
-        # 读取音频
         data, fs = sf.read(input_path)
-        if data.size == 0:
-            raise ValueError("音频文件为空")
-
-        # 初始化滤波器
-        audio_filter = AudioFilter(filter_length=filter_length, mu=mu)
-
-        # 选择滤波类型
+        # 对于非稳态噪声，使用更激进的参数
         if filter_type.lower() == 'lms':
-            ref = audio_filter.generate_reference(len(data), fs, f0)
-            filtered = audio_filter.lms_filter(data, ref)
+            filter_length = 32  # 减小滤波器长度以提高响应速度
+            mu = 0.01  # 增大步长以加快收敛
+        else:
+            Q = 2.0  # 降低Q值以增加带宽
+            
+        audio_filter = AudioFilter(filter_length=filter_length, mu=mu)
+        
+        # 单声道转换
+        if len(data.shape) > 1:
+            data = data.mean(axis=1)
+            
+        if filter_type.lower() == 'lms':
+            # 自动估计主频率
+            estimated_f0 = audio_filter._estimate_noise_frequency(data, fs)
+            f0 = estimated_f0 if f0 is None else f0
+            
+            # 生成复合参考信号
+            t = np.arange(len(data)) / fs
+            reference = np.sin(2 * np.pi * f0 * t)
+            # 添加谐波分量
+            reference += 0.5 * np.sin(4 * np.pi * f0 * t)
+            
+            filtered = audio_filter.lms_filter(data, reference, mu)
         else:
             filtered = audio_filter.iir_notch_filter(data, fs, f0, Q)
-
-        # 保存输出文件
+            
         sf.write(output_path, filtered, fs)
         return output_path
-
+        
     except Exception as e:
         print(f"处理音频文件时出错: {e}")
         return None

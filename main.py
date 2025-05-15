@@ -119,45 +119,44 @@ class AudioApp(TkinterDnD.Tk):
             messagebox.showerror("错误", "请选择有效的 WAV 文件")
             return
 
-        # 获取噪声参数
-        noise_type = self.noise_type_var.get()
-        noise_freq = self.noise_freq_var.get()
-        noise_amp = self.noise_amp_var.get()
-
         try:
-            # 拷贝原始（干净）音频到 output 目录，便于后续 SNR 分析
+            # 读取原始音频
+            y_orig, sr = sf.read(filepath)
             filename = os.path.basename(filepath)
             clean_path = os.path.join(self.output_dir, filename)
+            
             # 如果目标文件不存在则拷贝
             if not os.path.exists(clean_path):
                 import shutil
                 shutil.copy2(filepath, clean_path)
                 self.result_text.insert(tk.END, f"已拷贝原始音频至: {clean_path}\n")
             
-            # 读取原始音频
-            y_orig, sr = sf.read(filepath)
-            is_stereo = len(y_orig.shape) > 1 and y_orig.shape[1] > 1
-            
             # 生成噪声
-            t = np.arange(len(y_orig)) / sr
+            from noise_generator import generate_steady_noise, generate_non_steady_noise
+            
+            is_stereo = len(y_orig.shape) > 1 and y_orig.shape[1] > 1
+            noise_type = self.noise_type_var.get()
+            noise_freq = self.noise_freq_var.get()
+            noise_amp = self.noise_amp_var.get()
+            
             if noise_type == "steady":
-                noise = noise_amp * np.sin(2 * np.pi * noise_freq * t)
+                noise = generate_steady_noise(len(y_orig), sr, noise_freq, noise_amp)
             else:
-                noise = noise_amp * np.sin(2 * np.pi * noise_freq * t) * (1 + 0.5 * np.sin(2 * np.pi * 2 * t))
+                noise = generate_non_steady_noise(len(y_orig), sr, noise_freq, noise_amp)
+                
             if is_stereo:
                 noise = np.column_stack((noise, noise))
             
-            # 混合噪声并保存带噪文件
+            # 混合噪声并保存
             y_noisy = y_orig + noise
             noisy_path = os.path.join(self.output_dir, os.path.splitext(filename)[0] + '_noisy.wav')
             sf.write(noisy_path, y_noisy, sr)
             
-            # 显示添加噪声消息
-            self.result_text.insert(tk.END, f"已添加噪声，保存至: {noisy_path}\n")
+            self.result_text.insert(tk.END, f"已添加{noise_type}噪声，保存至: {noisy_path}\n")
             self.file_entry.delete(0, tk.END)
             self.file_entry.insert(0, noisy_path)
             
-            # 同时计算并绘制滤波前 SNR（使用拷贝的干净音频作为参考）
+            # 计算并绘制SNR
             self.plot_snr(y_orig, y_noisy, sr)
             
         except Exception as e:
@@ -202,15 +201,12 @@ class AudioApp(TkinterDnD.Tk):
 
         def worker():
             try:
-                # 从拷贝的干净文件获取原始信号（拷贝时存储在 output 目录）
+                # 获取相关文件路径
                 filename = os.path.basename(filepath)
-                # 假设原始文件名就是去掉 _noisy.wav 后缀
                 clean_path = os.path.join(self.output_dir, filename.replace('_noisy.wav', '.wav'))
                 if not os.path.exists(clean_path):
                     messagebox.showerror("错误", f"未找到原始干净音频文件：{clean_path}")
                     return
-                y_clean, sr = sf.read(clean_path)
-                y_noisy, _ = sf.read(filepath)
 
                 # 获取滤波器参数和分类结果
                 features, result = classify_audio(filepath)
@@ -218,7 +214,6 @@ class AudioApp(TkinterDnD.Tk):
                 self.result_text.insert(tk.END, f"噪声分类结果: {result}\n")
                 filter_type = "iir" if result == "稳态噪声" else "lms"
                 
-                filename = os.path.basename(filepath)
                 out_path = os.path.join(self.output_dir, os.path.splitext(filename)[0] + '_filtered.wav')
                 
                 processed = process_audio(
@@ -226,20 +221,26 @@ class AudioApp(TkinterDnD.Tk):
                     output_path=out_path,
                     filter_type=filter_type,
                     f0=self.noise_freq_var.get(),
-                    Q=5.0 if filter_type == "iir" else None,
-                    filter_length=64 if filter_type == "lms" else None,
-                    mu=0.001 if filter_type == "lms" else None
+                    Q=2.0 if filter_type == "iir" else None,  # 降低Q值
+                    filter_length=32 if filter_type == "lms" else None,  # 减小滤波器长度
+                    mu=0.01 if filter_type == "lms" else None  # 增大步长
                 )
 
                 if processed:
                     self.result_text.insert(tk.END, f"滤波完成，输出文件: {out_path}\n")
-                    plot_comparison(filepath, out_path, title_prefix="频谱对比 - ")
+                    # 使用更新后的plot_comparison函数进行分析
+                    snr_results = plot_comparison(
+                        original_path=filepath,  # 含噪音频
+                        processed_path=out_path, # 滤波后音频
+                        clean_path=clean_path,   # 原始干净音频
+                        title_prefix="频谱对比 - "
+                    )
                     
-                    # 计算滤波前后 SNR（均以干净音频作为参考）
-                    snr_before = np.mean([10 * np.log10(np.mean(y_clean**2) / (np.mean((y_noisy - y_clean)**2)+1e-10))])
-                    y_filt, _ = sf.read(out_path)
-                    snr_after = np.mean([10 * np.log10(np.mean(y_clean**2) / (np.mean((y_filt - y_clean)**2)+1e-10))])
-                    self.result_text.insert(tk.END, f"滤波前 SNR: {snr_before:.2f} dB\n滤波后 SNR: {snr_after:.2f} dB\n")
+                    if snr_results:
+                        snr_before, snr_after = snr_results
+                        self.result_text.insert(tk.END, 
+                            f"平均SNR分析:\n滤波前: {snr_before:.2f} dB\n滤波后: {snr_after:.2f} dB\n"
+                            f"SNR提升: {snr_after - snr_before:.2f} dB\n")
                 else:
                     self.result_text.insert(tk.END, "滤波失败\n")
             except Exception as e:
@@ -251,15 +252,19 @@ class AudioApp(TkinterDnD.Tk):
         if not HAS_REALTIME:
             messagebox.showinfo("提示", "未检测到实时处理模块。")
             return
-
-        noise_type = self.noise_type_var.get()
-        noise_freq = self.noise_freq_var.get()
-        noise_amp = self.noise_amp_var.get()
+            
+        # 定义录音参数
+        FORMAT = pyaudio.paInt16  # 改用PCM格式
+        CHANNELS = 1
+        RATE = 16000
+        CHUNK = 1024
 
         rec_win = tk.Toplevel(self)
         rec_win.title("实时录音")
         rec_win.geometry("400x180")
         rec_win.resizable(False, False)
+        
+        # 录音界面控件
         rec_label = tk.Label(rec_win, text="点击开始录音，录音结束后自动处理", font=('微软雅黑', 12))
         rec_label.pack(pady=10)
         status_var = tk.StringVar(value="等待录音...")
@@ -270,100 +275,120 @@ class AudioApp(TkinterDnD.Tk):
         stop_btn = ttk.Button(rec_win, text="停止录音", width=15, state=tk.DISABLED)
         stop_btn.pack(pady=5)
 
-        def safe_insert(widget, content, clear=False):
-            def _insert():
-                if clear:
-                    widget.delete(1.0, tk.END)
-                widget.insert(tk.END, content)
-            widget.after(0, _insert)
-
-        def process_recorded_audio(tmp_wav):
-            try:
-                y_orig, sr = sf.read(tmp_wav)
-                t = np.arange(len(y_orig)) / sr
-                if noise_type == "steady":
-                    noise = noise_amp * np.sin(2 * np.pi * noise_freq * t)
-                else:
-                    noise = noise_amp * np.sin(2 * np.pi * noise_freq * t) * (1 + 0.5 * np.sin(2 * np.pi * 2 * t))
-                y_noisy = y_orig + noise
-                noisy_path = os.path.join(self.output_dir, 'realtime_noisy.wav')
-                sf.write(noisy_path, y_noisy, sr)
-                
-                from plot_audio_comparison import plot_comparison
-                features, result = classify_audio(noisy_path)
-                filter_type = "iir" if result == "稳态噪声" else "lms"
-                params = {
-                    "filter_type": filter_type,
-                    "f0": noise_freq,
-                    "Q": 5.0 if filter_type == "iir" else None,
-                    "filter_length": 64 if filter_type == "lms" else None,
-                    "mu": 0.001 if filter_type == "lms" else None
-                }
-                out_path = os.path.join(self.output_dir, 'realtime_filtered.wav')
-                if process_audio(noisy_path, out_path, **params):
-                    safe_insert(self.result_text, f"实时处理完成\n原始录音: {tmp_wav}\n带噪声音频: {noisy_path}\n滤波后音频: {out_path}\n", clear=True)
-                    plot_comparison(noisy_path, out_path, title_prefix="实时处理 - ")
-                    self.plot_snr(y_orig, y_noisy, sr)
-                else:
-                    safe_insert(self.result_text, "滤波失败\n")
-            except Exception as e:
-                safe_insert(self.result_text, f"实时处理失败：{str(e)}\n")
-            finally:
-                rec_win.destroy()
+        self._recording = False  # 录音状态标志
+        self._audio_frames = []  # 音频数据缓存
 
         def record():
             try:
+                p = pyaudio.PyAudio()
+                stream = p.open(format=FORMAT, 
+                              channels=CHANNELS,
+                              rate=RATE,
+                              input=True, 
+                              frames_per_buffer=CHUNK)
+                
                 self._recording = True
                 self._audio_frames = []
-                p = pyaudio.PyAudio()
-                stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                                input=True, frames_per_buffer=CHUNK)
-
+                
                 def record_thread():
-                    while self._recording:
-                        try:
-                            if stream.is_active():
-                                data = stream.read(CHUNK, exception_on_overflow=False)
-                                self._audio_frames.append(data)
-                                time.sleep(0.01)  # yield control
-                        except Exception as e:
-                            print(f"录音错误: {e}")
-                            break
-                    stream.stop_stream()
-                    stream.close()
-                    p.terminate()
-                    if len(self._audio_frames) > 0:
-                        self.after(100, lambda: process_recorded_audio(self._save_temp()))
-
+                    try:
+                        while self._recording:
+                            data = stream.read(CHUNK, exception_on_overflow=False)
+                            self._audio_frames.append(data)
+                            import time
+                            time.sleep(0.001)  # 短暂释放CPU
+                    finally:
+                        stream.stop_stream()
+                        stream.close()
+                        p.terminate()
+                        
+                        if len(self._audio_frames) > 0:
+                            # 在主线程中处理录音数据
+                            rec_win.after(100, process_recorded_audio)
+                
+                # 启动录音线程
                 threading.Thread(target=record_thread, daemon=True).start()
+                
+                # 更新界面状态
+                status_var.set("录音中...点击停止录音")
+                record_btn.config(state=tk.DISABLED)
+                stop_btn.config(state=tk.NORMAL)  # 修复这里的语法错误
+                
             except Exception as e:
                 messagebox.showerror("错误", f"录音初始化失败: {str(e)}")
+                self._recording = False
 
-        def stop_record():
+        def stop_recording():
             self._recording = False
             status_var.set("正在保存录音...")
             stop_btn.config(state=tk.DISABLED)
 
-        def start_record():
-            record_btn.config(state=tk.DISABLED)
-            stop_btn.config(state=tk.NORMAL)
-            stop_btn.config(command=stop_record)
-            record()
+        def process_recorded_audio():
+            try:
+                from io import BytesIO
+                import wave
+                
+                # 保存为WAV格式
+                wav_buffer = BytesIO()
+                with wave.open(wav_buffer, 'wb') as wf:
+                    wf.setnchannels(CHANNELS)
+                    wf.setsampwidth(pyaudio.PyAudio().get_sample_size(FORMAT))
+                    wf.setframerate(RATE)
+                    wf.writeframes(b''.join(self._audio_frames))
+                
+                # 转换为float32进行处理
+                wav_buffer.seek(0)
+                y_orig, sr = sf.read(wav_buffer)
+                
+                # 保存原始录音
+                clean_path = os.path.join(self.output_dir, 'realtime_clean.wav')
+                sf.write(clean_path, y_orig, sr)
+                
+                # 生成并添加噪声
+                from noise_generator import add_noise_to_audio
+                y_noisy = add_noise_to_audio(
+                    y_orig, 
+                    self.noise_type_var.get(),
+                    self.noise_freq_var.get(),
+                    self.noise_amp_var.get(),
+                    sr
+                )
+                
+                noisy_path = os.path.join(self.output_dir, 'realtime_noisy.wav')
+                sf.write(noisy_path, y_noisy, sr)
+                
+                # 其余处理逻辑保持不变
+                features, result = classify_audio(noisy_path)
+                filter_type = "iir" if result == "稳态噪声" else "lms"
+                out_path = os.path.join(self.output_dir, 'realtime_filtered.wav')
+                
+                if process_audio(noisy_path, out_path, 
+                                   filter_type=filter_type,
+                                   f0=self.noise_freq_var.get(),
+                                   Q=5.0 if filter_type == "iir" else None,
+                                   filter_length=64 if filter_type == "lms" else None,
+                                   mu=0.001 if filter_type == "lms" else None):
+                    # 更新处理结果
+                    self.result_text.delete(1.0, tk.END)
+                    self.result_text.insert(tk.END, 
+                        f"实时处理完成\n"
+                        f"原始录音: {clean_path}\n"
+                        f"带噪声音频: {noisy_path}\n"
+                        f"滤波后音频: {out_path}\n")
+                    # 使用干净录音进行对比分析
+                    plot_comparison(noisy_path, out_path, clean_path, title_prefix="实时处理 - ")
+                        
+            except Exception as e:
+                messagebox.showerror("错误", f"处理录音失败: {str(e)}")
+            finally:
+                rec_win.destroy()
 
-        self._save_temp = _save_temp.__get__(self)
-
-        # Helper function to save recorded frames to a temporary file in output
-        def _save_temp(self):
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.wav', dir=self.output_dir) as tmpfile:
-                wf = wave.open(tmpfile.name, 'wb')
-                wf.setnchannels(CHANNELS)
-                wf.setsampwidth(pyaudio.PyAudio().get_sample_size(FORMAT))
-                wf.setframerate(RATE)
-                wf.writeframes(b''.join(self._audio_frames))
-                wf.close()
-                return tmpfile.name
-
-        record_btn.config(command=start_record)
+        # 绑定按钮事件
+        record_btn.config(command=record)
+        stop_btn.config(command=stop_recording)
+        
+        # 确保窗口关闭时停止录音
+        rec_win.protocol("WM_DELETE_WINDOW", lambda: [stop_recording(), rec_win.destroy()])
 
 if __name__ == '__main__':
     app = AudioApp()
