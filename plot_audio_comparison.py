@@ -76,44 +76,36 @@ def plot_comparison(original_path: str, processed_path: str, clean_path: str = N
 
     font = {'family': 'Microsoft YaHei', 'size': 13}
 
-    # 创建四个子图：波形、噪声、语谱图和SNR曲线
-    fig = plt.figure(figsize=(16, 12))
+    # 创建三个子图：波形、语谱图和SNR曲线
+    fig = plt.figure(figsize=(12, 10))  # 缩小图像尺寸
     
     # 波形对比
-    ax1 = plt.subplot(4, 1, 1)
-    if y_clean is not None:
-        plt.plot(y_clean, label='原始信号', alpha=0.7, color='green')
+    ax1 = plt.subplot(3, 1, 1)  # 改为3行1列的布局
+    # if y_clean is not None:
+    #     plt.plot(y_clean, label='原始信号', alpha=0.7, color='green')
     plt.plot(y_orig, label='含噪信号', alpha=0.7, color='red')
     plt.plot(y_proc, label='滤波后信号', alpha=0.7, color='blue')
     plt.title(f"{title_prefix}波形对比", fontdict=font)
     plt.legend(prop=font)
     plt.grid(True)
 
-    # # 噪声对比（如果有噪声信号）
-    # if y_noise is not None:
-    #     ax2 = plt.subplot(4, 1, 2)
-    #     plt.plot(y_noise, label='原始噪声', alpha=0.7, color='red')
-    #     noise_removed = y_orig - y_proc
-    #     plt.plot(noise_removed, label='消除的噪声', alpha=0.7, color='blue')
-    #     plt.title(f"{title_prefix}噪声对比", fontdict=font)
-    #     plt.legend(prop=font)
-    #     plt.grid(True)
+    # 注释掉的噪声对比部分保持删除状态
 
     # 语谱图对比
     D_orig = librosa.amplitude_to_db(np.abs(librosa.stft(y_orig)), ref=np.max)
     D_proc = librosa.amplitude_to_db(np.abs(librosa.stft(y_proc)), ref=np.max)
-    plt.subplot(4, 2, 5)
+    plt.subplot(3, 2, 3)  # 调整子图位置
     librosa.display.specshow(D_orig, sr=sr_orig, x_axis='time', y_axis='hz')
     plt.title(f"{title_prefix}含噪信号语谱图", fontdict=font)
     plt.colorbar(format="%+2.0f dB")
-    plt.subplot(4, 2, 6)
+    plt.subplot(3, 2, 4)  # 调整子图位置
     librosa.display.specshow(D_proc, sr=sr_orig, x_axis='time', y_axis='hz')
     plt.title(f"{title_prefix}滤波后语谱图", fontdict=font)
     plt.colorbar(format="%+2.0f dB")
 
     # SNR曲线对比
     if y_clean is not None:
-        ax4 = plt.subplot(4, 1, 4)
+        ax4 = plt.subplot(3, 1, 3)  # 调整为第3行
         window_size = int(0.05 * sr_orig)  # 50ms窗口
         snr_noisy = []
         snr_filtered = []

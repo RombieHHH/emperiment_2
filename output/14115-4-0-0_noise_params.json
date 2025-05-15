@@ -1,0 +1,20 @@
+{
+  "params": {
+    "type": "steady",
+    "frequency": 50.0,
+    "amplitude": 0.5,
+    "sample_rate": 44100,
+    "duration": 2.13
+  },
+  "features": {
+    "centroid_mean": 85.85591855641051,
+    "centroid_var": 126.32716240548582,
+    "bandwidth_mean": 213.4162268550398,
+    "bandwidth_var": 5149.706731751942,
+    "flux_mean": 209.89634811543974,
+    "flux_var": 233.53472205317584,
+    "entropy_mean": 3.0612289905548096,
+    "entropy_var": 0.019724946469068527
+  },
+  "classified_type": "\u975e\u7a33\u6001\u566a\u58f0"
+}
